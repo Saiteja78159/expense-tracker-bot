@@ -13,6 +13,7 @@ Flow for "summary" / "budget":
   Directly queries sheets and delegates to ReplyAgent.
 """
 
+import logging
 import json
 from agents.parser import ParserAgent
 from agents.classifier import ClassifierAgent
@@ -20,6 +21,8 @@ from agents.budget_checker import BudgetCheckerAgent
 from agents.storage import StorageAgent
 from agents.reply import ReplyAgent
 from utils.llm import ask_llm
+
+logger = logging.getLogger(__name__)
 
 
 class OrchestratorAgent:
@@ -74,23 +77,31 @@ class OrchestratorAgent:
     async def _detect_intent(self, message: str) -> str:
         """
         Returns 'expense', 'summary', or 'budget'.
-        Uses a quick LLM call so it understands natural language variations.
+        Uses keyword matching first, then LLM fallback.
+        If LLM fails (e.g. missing API key), defaults to 'expense'.
         """
         lower = message.lower().strip()
 
-        # Fast path for obvious keywords
+        # Fast path for obvious keywords — no LLM call needed
         if any(w in lower for w in ["summary", "report", "week", "weekly"]):
             return "summary"
         if any(w in lower for w in ["budget", "limit", "remaining", "left"]):
             return "budget"
+        # Common expense keywords — skip LLM entirely
+        if any(w in lower for w in ["spent", "paid", "bought", "spend", "pay", "purchased"]):
+            return "expense"
 
         # LLM fallback for ambiguous phrasing
-        system = (
-            "You classify a user message into one of three intents: "
-            "'expense' (logging money spent), 'summary' (asking for a spending report), "
-            "or 'budget' (asking how much budget is left). "
-            "Reply with ONLY one word: expense, summary, or budget."
-        )
-        intent = await ask_llm(system, message)
-        intent = intent.strip().lower()
-        return intent if intent in ("expense", "summary", "budget") else "expense"
+        try:
+            system = (
+                "You classify a user message into one of three intents: "
+                "'expense' (logging money spent), 'summary' (asking for a spending report), "
+                "or 'budget' (asking how much budget is left). "
+                "Reply with ONLY one word: expense, summary, or budget."
+            )
+            intent = await ask_llm(system, message)
+            intent = intent.strip().lower()
+            return intent if intent in ("expense", "summary", "budget") else "expense"
+        except Exception as e:
+            logger.warning(f"LLM intent detection failed, defaulting to 'expense': {e}")
+            return "expense"
