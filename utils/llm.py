@@ -3,7 +3,9 @@ utils/llm.py
 """
 import logging
 import httpx
-from config.settings import LLAMA_API_KEY, LLAMA_MODEL, LLAMA_BASE_URL
+from config.settings import LLAMA_API_KEY, LLAMA_BASE_URL
+
+LLAMA_MODEL = "llama-3.1-8b-instant"
 
 logger = logging.getLogger(__name__)
 
