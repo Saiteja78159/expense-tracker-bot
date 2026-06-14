@@ -15,7 +15,7 @@ PORT: int = int(os.getenv("PORT", 8000))
 
 # ── Llama (via Groq or Ollama) ─────────────────────────────────────────────────
 LLAMA_API_KEY: str = os.getenv("GROQ_API_KEY", "")      # Groq free tier for Llama 3
-LLAMA_MODEL: str = os.getenv("LLAMA_MODEL", "llama3-8b-8192")
+LLAMA_MODEL: str = os.getenv("LLAMA_MODEL", "llama-3.1-8b-instant")
 LLAMA_BASE_URL: str = os.getenv("LLAMA_BASE_URL", "https://api.groq.com/openai/v1")
 
 # ── Google Sheets ───────────────────────────────────────────────────────────────
