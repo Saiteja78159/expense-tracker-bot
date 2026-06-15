@@ -1,20 +1,22 @@
 """
-utils/llm.py
+utils/llm.py — Groq LLM wrapper
 """
 import logging
 import httpx
 from config.settings import LLAMA_API_KEY, LLAMA_BASE_URL
 
+logger = logging.getLogger(__name__)
+
+# Hardcoded model to avoid Railway env variable issues
 LLAMA_MODEL = "llama-3.1-8b-instant"
 
-logger = logging.getLogger(__name__)
 
 async def ask_llm(system_prompt: str, user_message: str, expect_json: bool = False) -> str:
     if not LLAMA_API_KEY:
-        raise ValueError("GROQ_API_KEY is not set in environment variables.")
+        raise ValueError("GROQ_API_KEY is not set in Railway environment variables.")
 
     if expect_json:
-        system_prompt += "\n\nIMPORTANT: Reply ONLY with valid JSON. No explanation, no markdown."
+        system_prompt += "\n\nCRITICAL: Reply ONLY with valid JSON. No explanation, no markdown, no backticks."
 
     url = f"{LLAMA_BASE_URL.rstrip('/')}/chat/completions"
 
@@ -27,28 +29,46 @@ async def ask_llm(system_prompt: str, user_message: str, expect_json: bool = Fal
         "model": LLAMA_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
+            {"role": "user",   "content": user_message},
         ],
         "temperature": 0.1,
         "max_tokens": 512,
     }
 
-    logger.info(f"Calling LLM: url={url}, model={LLAMA_MODEL}, key_prefix={LLAMA_API_KEY[:8]}")
+    logger.info(f"LLM call → model={LLAMA_MODEL}, key={LLAMA_API_KEY[:8]}...")
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.post(url, headers=headers, json=payload)
-        logger.info(f"LLM response status: {resp.status_code}")
+
         if resp.status_code != 200:
-            logger.error(f"LLM error body: {resp.text}")
+            logger.error(f"LLM error {resp.status_code}: {resp.text[:300]}")
+
+        if resp.status_code == 401:
+            raise ValueError("Invalid GROQ_API_KEY — check Railway Variables.")
+        if resp.status_code == 404:
+            raise ValueError(
+                f"Groq 404: model '{LLAMA_MODEL}' not found or API key missing. "
+                f"Key prefix: '{LLAMA_API_KEY[:8]}'"
+            )
+        if resp.status_code == 429:
+            raise ValueError("Groq rate limit hit. Please wait a moment.")
+
         resp.raise_for_status()
         result = resp.json()
 
     text = result["choices"][0]["message"]["content"].strip()
 
-    if expect_json and text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+    # Clean JSON response if needed
+    if expect_json:
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        # Remove any trailing text after closing brace
+        if "{" in text:
+            start = text.index("{")
+            end = text.rindex("}") + 1
+            text = text[start:end]
 
     return text

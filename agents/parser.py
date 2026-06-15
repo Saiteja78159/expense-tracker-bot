@@ -1,11 +1,14 @@
 """
-agents/parser.py — Extracts structured data from a free-text expense message.
+agents/parser.py — Smart NLP Expense Parser v2
 
-Input:  "spent 250 on lunch with colleagues yesterday"
-Output: {"amount": 250.0, "category": "Food", "description": "lunch with colleagues", "date": "2026-06-13"}
-
-The LLM is prompted to return strict JSON. A regex fallback handles edge cases
-where the model returns a malformed response.
+Understands:
+  ✅ "spent 300 on dinner"
+  ✅ "had lunch for 100 bucks"
+  ✅ "100 rupees kharcha hua lunch pe"
+  ✅ "paid 1200 electricity bill yesterday"
+  ✅ "coffee 80"
+  ✅ "dinner cost me 500"
+  ✅ "50 pe chai pee"
 """
 
 import json
@@ -15,44 +18,64 @@ from typing import Optional, Dict
 
 from utils.llm import ask_llm
 
+LLAMA_MODEL = "llama-3.1-8b-instant"
+
 
 def _build_system_prompt():
     today = str(date.today())
     yesterday = str(date.today() - timedelta(days=1))
-    return f"""
-You are an expense parsing assistant.
-Today's date is {today}. Use this exact date when the message says "today" or has no date.
+    return f"""You are a multilingual expense parsing assistant. You understand English, Hindi, and Hinglish.
+Today's date is {today}.
+
 Extract expense details from the user's message and return ONLY this JSON:
 
 {{
   "amount": <number>,
   "category": "<one of: Food, Travel, Bills, Shopping, Health, Entertainment, Other>",
-  "description": "<short clean description>",
+  "description": "<short clean description in English>",
   "date": "<YYYY-MM-DD>"
 }}
 
 Rules:
-- "amount" must be a positive number (no currency symbols).
-- "category" must be exactly one of the listed options.
-- "description" is a 2–5 word summary.
-- "date": if the message says "today" or no date → use {today}.
-         If "yesterday" → use {yesterday}. If a specific date is given → use it.
-- If no expense is found, return: {{"error": "not an expense"}}
-"""
+- "amount": positive number only (no currency symbols). Handle: "100 rupees", "₹200", "50 bucks", "Rs 300"
+- "category": classify based on context:
+    Food = meals, restaurants, groceries, chai, coffee, lunch, dinner, breakfast, khana
+    Travel = petrol, fuel, auto, cab, uber, ola, bus, train, flight
+    Bills = electricity, rent, wifi, internet, mobile, recharge, EMI
+    Shopping = clothes, shoes, electronics, amazon, flipkart, mall
+    Health = medicine, doctor, hospital, pharmacy, gym
+    Entertainment = movie, game, netflix, concert, party
+    Other = anything else
+- "description": 2-5 word English summary of what was spent on
+- "date": today={today}, yesterday={yesterday}, any relative date → calculate
+
+Hinglish examples:
+- "100 rupees kharcha hua lunch pe" → amount=100, category=Food, description="lunch"
+- "50 pe chai pee" → amount=50, category=Food, description="tea/chai"
+- "petrol mein 500 lagaye" → amount=500, category=Travel, description="petrol"
+- "bijli ka bill 1200 diya" → amount=1200, category=Bills, description="electricity bill"
+
+If no expense found, return: {{"error": "not an expense"}}"""
 
 
 class ParserAgent:
     async def parse(self, message: str) -> Optional[Dict]:
         """
-        Parses a natural-language expense message.
+        Parses any natural-language expense message (English/Hindi/Hinglish).
         Returns a dict with amount/category/description/date, or None on failure.
         """
-        raw = await ask_llm(_build_system_prompt(), message, expect_json=True)
+        # Quick regex pre-check — if no number in message, skip LLM
+        if not re.search(r'\d', message):
+            return None
 
         try:
+            raw = await ask_llm(_build_system_prompt(), message, expect_json=True)
             data = json.loads(raw)
         except json.JSONDecodeError:
-            # Regex fallback: try to extract just the amount
+            data = self._regex_fallback(message)
+            if not data:
+                return None
+        except Exception:
             data = self._regex_fallback(message)
             if not data:
                 return None
@@ -60,28 +83,38 @@ class ParserAgent:
         if "error" in data:
             return None
 
-        # Validate required fields
         if not data.get("amount") or float(data["amount"]) <= 0:
             return None
 
-        # Normalise types
         data["amount"] = float(data["amount"])
         data["date"]   = data.get("date") or str(date.today())
+        data["category"] = data.get("category", "Other")
+        data["description"] = data.get("description", message[:50])
 
         return data
 
-    # ── Fallback ───────────────────────────────────────────────────────────────
     def _regex_fallback(self, message: str) -> Optional[Dict]:
         """
-        Last-resort: pull a number from the message and mark category as Other.
-        E.g. "250 lunch" → amount=250, description="lunch", category="Other"
+        Extracts amount from any message as a last resort.
+        Handles: "₹300", "Rs 200", "300 rupees", "300"
         """
-        match = re.search(r"\b(\d+(?:\.\d+)?)\b", message)
-        if not match:
-            return None
-        return {
-            "amount":      float(match.group(1)),
-            "category":    "Other",
-            "description": message[:50],
-            "date":        str(date.today()),
-        }
+        # Try to find amount with currency indicators
+        patterns = [
+            r'₹\s*(\d+(?:\.\d+)?)',        # ₹300
+            r'rs\.?\s*(\d+(?:\.\d+)?)',     # Rs 300 or rs300
+            r'(\d+(?:\.\d+)?)\s*rupees?',  # 300 rupees
+            r'(\d+(?:\.\d+)?)\s*bucks?',   # 300 bucks
+            r'\b(\d+(?:\.\d+)?)\b',        # plain number
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message.lower())
+            if match:
+                amount = float(match.group(1))
+                if amount > 0:
+                    return {
+                        "amount":      amount,
+                        "category":    "Other",
+                        "description": message[:50].strip(),
+                        "date":        str(date.today()),
+                    }
+        return None
