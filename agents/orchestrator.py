@@ -27,8 +27,8 @@ SUMMARY_KEYWORDS = ["summary", "report", "week", "weekly", "last 7", "past week"
 BUDGET_KEYWORDS  = ["budget", "limit", "remaining", "kitna bacha", "left", "how much left"]
 INSIGHT_KEYWORDS = ["insight", "trend", "analysis", "compare", "spending pattern",
                     "most spent", "category wise", "breakdown", "sabse zyada"]
-QUERY_KEYWORDS   = ["how much", "kitna", "total", "spent on", "did i spend",
-                    "kharcha", "expense on", "what did i spend"]
+QUERY_KEYWORDS   = ["how much did", "kitna spent", "total spent", "spent on",
+                    "did i spend", "expense on", "what did i spend", "how much have i"]
 
 
 class OrchestratorAgent:
@@ -113,10 +113,16 @@ class OrchestratorAgent:
 
         # Common expense patterns — skip LLM
         expense_triggers = [
+            # English
             "spent", "spend", "paid", "pay", "bought", "buy",
-            "kharcha", "kharach", "lagaya", "diya", "rupees", "rs ",
+            "had lunch", "had dinner", "had breakfast", "had coffee",
+            "cost me", "for lunch", "for dinner", "for breakfast",
             "₹", "dinner", "lunch", "breakfast", "coffee", "bill",
             "petrol", "fuel", "medicine", "movie", "ticket",
+            # Hinglish / Hindi
+            "kharcha hua", "kharach hua", "kharcha kiya", "lagaya", "lagaye",
+            "diya", "rupees", "rs ", "pe lunch", "pe dinner", "pe chai",
+            "pe breakfast", "mein lagaye", "ka bill", "ki fees",
         ]
         if any(w in lower for w in expense_triggers):
             return "expense", {}
